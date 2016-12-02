@@ -19,6 +19,7 @@ namespace PF.Connectors
     {
         int _maxThreads = int.Parse(ConfigurationManager.AppSettings["max_preparation_threads"]);
         int _maxFilesScanCocur = int.Parse(ConfigurationManager.AppSettings["max_file_scan_threads"]);
+        int _maxFileSize = int.Parse(ConfigurationManager.AppSettings["max_file_size"]);
 
         public SMBConnector() :base()
         { }
@@ -45,7 +46,6 @@ namespace PF.Connectors
         {
             try
             { 
-
                 item.Metadata.Add(new MetadataItem("Created_At", info.CreationTimeUtc.ToString()));
                 item.Metadata.Add(new MetadataItem("Last_Accessed_At", info.LastAccessTimeUtc.ToString()));
                 item.Metadata.Add(new MetadataItem("Updated_At", info.LastWriteTimeUtc.ToString()));
@@ -72,7 +72,7 @@ namespace PF.Connectors
         public async Task<ScanResult> ScanNext(IteratorItem item)
         {
             ScanResult retVal = null;
-            Console.WriteLine("Started processing: " + item.DataObjectIdentifier + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId + ", time: " + DateTime.UtcNow.ToString("MM/dd/yyyy hh:mm:ss.fff tt"));
+            Log.Trace("Started processing: " + item.DataObjectIdentifier + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             try
             { 
                 if (item == null)
@@ -81,24 +81,33 @@ namespace PF.Connectors
                 Dictionary<string, List<string>> identifiers = null;
 
                 FileInfo file = new FileInfo(item.DataObjectIdentifier);
-                // Get text of the file
-                string txt = await FileUtils.Parse(file);
 
-                if (txt != null && txt.Length > 0)
+                if (file.Length > _maxFileSize * 1000000)
                 {
-                    //Do NER
-                    identifiers = await NER.Parse(txt);
+                    Log.Warn("File too big:" + file.FullName + ", Size:" + file.Length);
+                }
+                else
+                {
+                    // Get text of the file
+                    string txt = await FileUtils.Parse(file);
 
-                //    if (identifiers != null && identifiers.Count > 0)
-                //    {
-                        // Get metadata
-                        item = await CollectFileMetadata(item, file);
+                    if (txt != null && txt.Length > 0)
+                    {
+                        //Do NER
+                        identifiers = await NER.Parse(txt);
 
-                        retVal = new ScanResult() { DataObjectIdentifier = item.DataObjectIdentifier, Identifiers = identifiers, Metadata = item.Metadata };
-                    
-                        // Store results
-                        await SMBDal.AddDataObject(retVal);
-                  //  }
+                        if (identifiers != null && identifiers.Count > 0)
+                        {
+                            // Get metadata
+                            item = await CollectFileMetadata(item, file);
+
+                            retVal = new ScanResult() { DataObjectIdentifier = item.DataObjectIdentifier, Identifiers = identifiers, Metadata = item.Metadata };
+
+                            // Store results
+                            await SMBDal.AddDataObject(retVal);
+                        }
+                    }
+                    Log.Info("Processed file:" + file.FullName + ", Identifiers: " + (identifiers == null ? "0" : identifiers.Count.ToString()));
                 }
             }
             catch (Exception ex)
@@ -106,7 +115,7 @@ namespace PF.Connectors
                 Log.Error(ex, "Failed to process file: " + item.DataObjectIdentifier);
             }
 
-            Console.WriteLine("Finished processing: " + retVal.DataObjectIdentifier + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId + ", time: " + DateTime.UtcNow.ToString("MM/dd/yyyy hh:mm:ss.fff tt"));
+            Log.Trace("Finished processing: " + retVal.DataObjectIdentifier + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             return retVal;
         }
 
@@ -162,24 +171,32 @@ namespace PF.Connectors
         }
         private async Task<bool> ProcessDir(string dir)
         {
-            Console.WriteLine("Started processing folder: " + dir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
-            // Process sub dirs
-            string[] directories = Directory.GetDirectories(dir);
+            Log.Trace("Started processing folder: " + dir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
 
-            //TODO: If this fails - enumerate
-
-            // Store all the sub dirs in the data store wiht flag - need to traverse
-            if (directories.Count() > 0)
+            try
             {
-                Console.WriteLine("Sent to BulkAdd " + directories.Count() + " records" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
-                await SMBDal.BulkAddFolders(directories.ToList());
-                Console.WriteLine("Line after BulkAdd of " + directories.Count() + " records" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                // Process sub dirs
+                string[] directories = Directory.GetDirectories(dir);
+
+                //TODO: If this fails - enumerate
+
+                // Store all the sub dirs in the data store wiht flag - need to traverse
+                if (directories.Count() > 0)
+                {
+                    Log.Trace("Sent to BulkAdd " + directories.Count() + " records" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                    await SMBDal.BulkAddFolders(directories.ToList());
+                    Log.Trace("Line after BulkAdd of " + directories.Count() + " records" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                }
+            }
+            catch(Exception ex)
+            {
+                Log.Error(ex, "Failed to process folder: " + dir);
             }
             return true;
         }
         private static void release(SemaphoreSlim sem)
         {
-            Console.WriteLine("Sem released" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+            Log.Trace("Sem released" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             sem.Release();
         }
         private async Task<bool> TraverseTree(string root, int maxTasks)
@@ -200,18 +217,18 @@ namespace PF.Connectors
                     }
                     else
                     {
-                        Console.WriteLine("Before wait: " + currentDir + ", wait: " + throttler.CurrentCount + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                        Log.Trace("Before wait: " + currentDir + ", wait: " + throttler.CurrentCount + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
                         await throttler.WaitAsync();
-                        Console.WriteLine("After wait: " + currentDir + ", wait: " + throttler.CurrentCount + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                        Log.Trace("After wait: " + currentDir + ", wait: " + throttler.CurrentCount + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
                         string value = currentDir.ToString();
                         postTaskTasks.Add(Task.Run(() => ProcessDir(value)).ContinueWith(tsk => release(throttler)));
-                        Console.WriteLine("After add task: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                        Log.Trace("After add task: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
 
                     }
 
                     // Fetch the next directory to traverse and do it again
                     currentDir = await SMBIterator.GetNextFolderForTraverse();
-                    Console.WriteLine("GetNextFolderForTraverse returned: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                    Log.Trace("GetNextFolderForTraverse returned: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
 
                     // Clean the completed tasks from the array
                     List<Task> toRemove = new List<Task>();
@@ -230,10 +247,10 @@ namespace PF.Connectors
 
                     if (currentDir == null)
                     {
-                        Console.WriteLine("WaitAll" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                        Log.Trace("WaitAll" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
                         Task.WaitAll(postTaskTasks.ToArray());
                         currentDir = await SMBIterator.GetNextFolderForTraverse();
-                        Console.WriteLine("Got directory after wait all: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                        Log.Trace("Got directory after wait all: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
                     }
                 }
             }

@@ -19,6 +19,9 @@ namespace PF.Dal
 
     public class SMBDal : BaseClass
     {
+        public SMBDal() :base()
+        { }
+
         protected static IMongoClient _client = new MongoClient(ConfigurationManager.AppSettings["mongo_connection_string"]);
         protected static IMongoDatabase _database = _client.GetDatabase(ConfigurationManager.AppSettings["mongo_database_name"]);
         static IMongoCollection<BsonDocument> _countersCollection = _database.GetCollection<BsonDocument>("counters");
@@ -48,17 +51,17 @@ namespace PF.Dal
                 long counter = await GetNextCounter("folderid");
 
                 documents.Add(new BsonDocument() { { "added_at", new BsonDateTime(DateTime.UtcNow) }, { "path", folder }, { "scanned", new BsonBoolean(false) }, { "counter", new BsonInt64(counter) } });
-                Console.WriteLine("saving: " + folder + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                Log.Trace("saving: " + folder + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             }
 
             await collection.InsertManyAsync(documents);
-            Console.WriteLine("Added " + documents.Count + " records to DB");
+            Log.Trace("Added " + documents.Count + " records to DB");
             return true;
         }
 
         public static async Task<string> GetNextFolderForTraverse()
         {
-            Console.WriteLine("start spinlock wait" + DateTime.Now.Second + ' ' + DateTime.Now.Millisecond);
+            Log.Trace("start spinlock wait");
             string retVal;
             lock (SpinLock)
             {
@@ -72,7 +75,7 @@ namespace PF.Dal
                             if (_currentPage.Count > 0)
                                 filterNumber = _currentPage[_currentPlaceInTheList - 1]["counter"].AsInt64;
 
-                            Console.WriteLine("GetNextFolderForTraverse, going to fetch new page after id: " + filterNumber);
+                            Log.Trace("GetNextFolderForTraverse, going to fetch new page after id: " + filterNumber);
                             var filter = Builders<BsonDocument>.Filter.Gt(new StringFieldDefinition<BsonDocument, BsonInt64>("counter"), new BsonInt64(filterNumber));
                             _currentPage = collection.Find(filter).SortBy(bson => bson["counter"]).Skip(0).Limit(100).ToList();
                             _currentPlaceInTheList = 0;
@@ -84,18 +87,18 @@ namespace PF.Dal
                 {
                     BsonDocument doc = null;
                     //return the next page for traverse with lock
-                    Console.WriteLine("GetNextFolderForTraverse, _currentPlaceInTheList: " + _currentPlaceInTheList + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                    Log.Trace("GetNextFolderForTraverse, _currentPlaceInTheList: " + _currentPlaceInTheList + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
 
                     doc = _currentPage[_currentPlaceInTheList];
                     _currentPlaceInTheList++;
                     retVal = doc["path"].AsString;
-                    
-                    Console.WriteLine("GetNextFolderForTraverse, returns: " + retVal + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+
+                    Log.Trace("GetNextFolderForTraverse, returns: " + retVal + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
                 }
                 else
                     retVal = null;
 
-                Console.WriteLine("end spinlock wait " + DateTime.Now.Second + ' ' + DateTime.Now.Millisecond + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                Log.Trace("end spinlock wait, Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             }
 
             return retVal;
@@ -124,7 +127,7 @@ namespace PF.Dal
                     }
 
                     var builder = Builders<BsonDocument>.Filter;
-                    var filter = builder.Gt("counter", new BsonInt64(filterNumber));// & builder.Eq("scanned", new BsonBoolean(false));
+                    var filter = builder.Gt("counter", new BsonInt64(filterNumber)) & builder.Eq("scanned", new BsonBoolean(false));
                     newFolder = collection.Find(filter).SortBy(bson => bson["counter"]).Skip(0).Limit(1).ToList();
 
                     if (newFolder != null && newFolder.Count > 0)
@@ -135,7 +138,7 @@ namespace PF.Dal
             }
 
             if (retVal != null)
-                Console.WriteLine("Getnextfolder: " + retVal["path"] + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                Log.Trace("Getnextfolder: " + retVal["path"] + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
 
             return retVal;
         }

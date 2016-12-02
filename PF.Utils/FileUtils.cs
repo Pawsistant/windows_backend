@@ -11,6 +11,9 @@ namespace PF.Utils
 {
     public class FileUtils : BaseClass
     {
+        public FileUtils() :base()
+        { }
+
         public static async Task<string> Parse(FileInfo file)
         {
             string text = null;
@@ -22,6 +25,10 @@ namespace PF.Utils
                 {
                     text = Word.Parse(fileStream);
                 }
+                else if (file.Extension.ToLower().EndsWith("doc"))
+                {
+                    text = OldWord.Parse(fileStream);
+                }
                 else if (file.Extension.ToLower().EndsWith("txt") || file.Extension.ToLower().EndsWith("csv") || file.Extension.ToLower().EndsWith("htm") || file.Extension.ToLower().EndsWith("html"))
                 {
                     StreamReader sr = new StreamReader(fileStream, Encoding.UTF8);
@@ -30,6 +37,10 @@ namespace PF.Utils
                 else if (file.Extension.ToLower().EndsWith("xlsx"))
                 {
                     text = Excel.Parse(fileStream);
+                }
+                else if (file.Extension.ToLower().EndsWith("xls"))
+                {
+                    text = OldExcel.Parse(fileStream);
                 }
                 else if (file.Extension.ToLower().EndsWith("eml") || file.Extension.ToLower().EndsWith("msg"))
                 {
@@ -42,6 +53,11 @@ namespace PF.Utils
                 else if (file.Extension.ToLower().EndsWith("pdf"))
                 {
                     text = Pdf.Parse(fileStream);
+                }
+
+                if (text != null && text != "")
+                {
+                    text += " " + file.FullName;
                 }
             }
             catch (Exception ex)

@@ -10,13 +10,23 @@ using MsgReader;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Presentation;
 using A = DocumentFormat.OpenXml.Drawing;
+using NPOI.HSSF.UserModel;
+using NPOI.DDF;
+using NPOI.WP;
+using NPOI.WP.UserModel;
+using NPOI.XWPF.UserModel;
+using NPOI.HSSF.Extractor;
 
 namespace PF.Utils.FileParsers
 {
     public class Word : BaseClass
     {
+        public Word() :base()
+        { }
+
         public static string Parse(FileStream file)
         {
+            
             string retVal = "";
 
             try
@@ -36,6 +46,9 @@ namespace PF.Utils.FileParsers
 
     public class Excel : BaseClass
     {
+        public Excel() :base()
+        { }
+       
         public static string Parse(FileStream file)
         {
             string retVal = "";
@@ -87,6 +100,9 @@ namespace PF.Utils.FileParsers
 
     public class Outlook : BaseClass
     {
+        public Outlook() :base()
+        { }
+
         public static string Parse(FileStream file)
         {
             MsgReader.Reader read = new Reader();
@@ -131,6 +147,9 @@ namespace PF.Utils.FileParsers
 
     public class PowerPoint : BaseClass
     {
+        public PowerPoint() :base()
+        { }
+
         public static string Parse(FileStream file)
         {
             string retVal = "";
@@ -205,6 +224,53 @@ namespace PF.Utils.FileParsers
                 paragraphText.Append(text.Text);
             }
             sldText = paragraphText.ToString();
+        }
+    }
+
+    public class OldWord : BaseClass
+    {
+        public OldWord() :base()
+        { }
+
+        public static string Parse(FileStream file)
+        {
+            string retVal = "";
+
+            try
+            {
+
+               // NPOI.HWPF.HWPFDocument doc = new HWPFDocument(file);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to parse: " + file.Name);
+            }
+
+            return retVal;
+        }
+    }
+
+    public class OldExcel : BaseClass
+    {
+        public OldExcel() :base()
+        { }
+
+        public static string Parse(FileStream file)
+        {
+            string retVal = "";
+
+            try
+            {                
+                HSSFWorkbook hssfwb = new HSSFWorkbook(file);
+                ExcelExtractor extractor = new ExcelExtractor(hssfwb);
+                retVal = extractor.Text;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to parse: " + file.Name);
+            }
+
+            return retVal;
         }
     }
 }

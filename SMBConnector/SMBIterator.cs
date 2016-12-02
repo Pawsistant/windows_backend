@@ -10,8 +10,11 @@ using System.Threading.Tasks;
 
 namespace PF.Connectors
 {
-    public class SMBIterator
+    public class SMBIterator : BaseClass
     {
+        public SMBIterator() :base()
+        { }
+
         static Dictionary<string,object> _currentFolder = null;
         static IList<string> _files = null;
         static int _currentFileNumber = 0;
@@ -48,23 +51,30 @@ namespace PF.Connectors
 
             lock (SpinLock)
             {
-                if (_currentFolder == null || _currentFileNumber == _files.Count)
+                try
                 {
-                    getNextFolder();
-
-                    if (_files != null && _files.Count == 0)
+                    if (_currentFolder == null || _currentFileNumber == _files.Count)
                     {
-                        while (_files.Count == 0)
-                            getNextFolder();
+                        getNextFolder();
+
+                        if (_files != null && _files.Count == 0)
+                        {
+                            while (_files.Count == 0)
+                                getNextFolder();
+                        }
+                        if (_files == null)
+                            return null;
+
+                        _currentFileNumber = 0;
                     }
-                    if (_files == null)
-                        return null;
 
-                    _currentFileNumber = 0;
+                    retVal = _files[_currentFileNumber];
+                    _currentFileNumber++;
                 }
-
-                retVal = _files[_currentFileNumber];
-                _currentFileNumber++;
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to get next folder. Current folder: " + _currentFolder);
+                }
             }
 
             // Return the next item from the list
@@ -77,21 +87,28 @@ namespace PF.Connectors
             
             lock (SpinLock)
             {
-                if (_currentFolder == null || _currentFileNumber == _files.Count)
+                try
                 {
-                    getNextFolder();
-
-                    if (_files.Count == 0)
+                    if (_currentFolder == null || _currentFileNumber == _files.Count)
                     {
-                        while (_files.Count == 0)
-                            getNextFolder();
+                        getNextFolder();
+
+                        if (_files.Count == 0)
+                        {
+                            while (_files.Count == 0)
+                                getNextFolder();
+                        }
+
+                        _currentFileNumber = 0;
                     }
 
-                    _currentFileNumber = 0;
+                    retVal = _files[_currentFileNumber];
+                    _currentFileNumber++;
                 }
-            
-                retVal = _files[_currentFileNumber];
-                _currentFileNumber++;
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to get next folder. Current folder: " + _currentFolder);
+                }
             }
 
             // Return the next item from the list
