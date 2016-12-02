@@ -24,8 +24,11 @@ namespace Tester
             repo.properties.Add("username", "");
             repo.properties.Add("password", "");
             repo.properties.Add("domain", "");
-            repo.properties.Add("share_url", "");
-            await connector.Prepare(repo);
+            repo.properties.Add("share_url", "\\\\Laptop-7ir86jf2\\bufs");
+         //   await connector.Prepare(repo);
+            bool r = await connector.Scan(repo);
+            Console.WriteLine("done");
+            Console.ReadLine();
         }
     }
 }

@@ -8,6 +8,8 @@ using System.IO;
 using PF.Dal;
 using System.Net;
 using System.Threading;
+using System.Configuration;
+
 using PF.Utils;
 using System.Security.AccessControl;
 
@@ -15,15 +17,23 @@ namespace PF.Connectors
 {
     public class SMBConnector : BaseClass
     {
-        int _maxThreads = 10;
+        int _maxThreads = int.Parse(ConfigurationManager.AppSettings["max_preparation_threads"]);
+        int _maxFilesScanCocur = int.Parse(ConfigurationManager.AppSettings["max_file_scan_threads"]);
 
         public SMBConnector() :base()
         { }
 
+        static void PrepCredentials(Repository fsRepo)
+        {
+            if (Boolean.Parse(ConfigurationManager.AppSettings["with_credentials"]))
+            {
+                // Setup credentials for file share
+                FileUtils.SetupCredentials(fsRepo.properties["domain"], fsRepo.properties["username"], fsRepo.properties["password"], fsRepo.properties["share_url"]);
+            }
+        }
         public async Task<bool> Prepare(Repository fsRepo)
         {
-            // Setup credentials for file share
-            FileUtils.SetupCredentials(fsRepo.properties["domain"], fsRepo.properties["username"], fsRepo.properties["password"], fsRepo.properties["share_url"]);
+            PrepCredentials(fsRepo);
 
             // Go over all the folders and store them in the database for scanning
             await TraverseTree(fsRepo.properties["share_url"], _maxThreads);
@@ -31,61 +41,147 @@ namespace PF.Connectors
             return true;
         }
 
-        private async Task<IteratorItem> CollectFileMetadata(IteratorItem item)
+        private async Task<IteratorItem> CollectFileMetadata(IteratorItem item, FileInfo info)
         {
-            FileInfo info = await FileUtils.GetFileInfo(item.DataObjectIdentifier);
-            item.Metadata.Add("Created_At", new MetadataItem(info.CreationTimeUtc.ToString()));
-            item.Metadata.Add("Last_Accessed_At", new MetadataItem(info.LastAccessTimeUtc.ToString()));
-            item.Metadata.Add("Updated_At", new MetadataItem(info.LastWriteTimeUtc.ToString()));
-            item.Metadata.Add("Size", new MetadataItem(info.Length.ToString()));
-            FileSecurity fs = info.GetAccessControl(AccessControlSections.Access);
+            try
+            { 
 
-            foreach (FileSystemAccessRule ar in fs.GetAccessRules(true, true, typeof(System.Security.Principal.NTAccount)))
-            {
-                item.Metadata.Add("Access_Rights", new MetadataItem(ar.IdentityReference.Value, ar.ToString()));
+                item.Metadata.Add(new MetadataItem("Created_At", info.CreationTimeUtc.ToString()));
+                item.Metadata.Add(new MetadataItem("Last_Accessed_At", info.LastAccessTimeUtc.ToString()));
+                item.Metadata.Add(new MetadataItem("Updated_At", info.LastWriteTimeUtc.ToString()));
+                item.Metadata.Add(new MetadataItem("Size", info.Length.ToString()));
+                FileSecurity fs = info.GetAccessControl(AccessControlSections.Access);
+
+                foreach (FileSystemAccessRule ar in fs.GetAccessRules(true, true, typeof(System.Security.Principal.NTAccount)))
+                {
+                    item.Metadata.Add(new MetadataItem("Access_Rights", ar.IdentityReference.Value, ar.FileSystemRights.ToString()));
+                }
             }
-
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to collect metadata: " + info.FullName);
+            }
             return item;
         }
 
-
         public async Task<ScanResult> ScanNext()
         {
-            IteratorItem item = await SMBIterator.NextItem();
+            IteratorItem item = await SMBIterator.NextItemAsync();
+            return await ScanNext(item);
+        }
+        public async Task<ScanResult> ScanNext(IteratorItem item)
+        {
+            ScanResult retVal = null;
+            Console.WriteLine("Started processing: " + item.DataObjectIdentifier + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId + ", time: " + DateTime.UtcNow.ToString("MM/dd/yyyy hh:mm:ss.fff tt"));
+            try
+            { 
+                if (item == null)
+                    return null;
 
-            string txt = await FileUtils.Parse(item.DataObjectIdentifier);
+                Dictionary<string, List<string>> identifiers = null;
 
-            if (txt != null && txt.Length > 0)
-            {
-                //Do NER
-                Dictionary<string, List<string>> identifiers = await NER.Parse(txt);
+                FileInfo file = new FileInfo(item.DataObjectIdentifier);
+                // Get text of the file
+                string txt = await FileUtils.Parse(file);
 
-                if (identifiers != null && identifiers.Count > 0)
+                if (txt != null && txt.Length > 0)
                 {
-                    // Get metadata
-                    item = await CollectFileMetadata(item);
+                    //Do NER
+                    identifiers = await NER.Parse(txt);
 
-                    // Write into Mongo
-                    await SMBDal.AddDataObject(item);
+                //    if (identifiers != null && identifiers.Count > 0)
+                //    {
+                        // Get metadata
+                        item = await CollectFileMetadata(item, file);
+
+                        retVal = new ScanResult() { DataObjectIdentifier = item.DataObjectIdentifier, Identifiers = identifiers, Metadata = item.Metadata };
+                    
+                        // Store results
+                        await SMBDal.AddDataObject(retVal);
+                  //  }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to process file: " + item.DataObjectIdentifier);
+            }
+
+            Console.WriteLine("Finished processing: " + retVal.DataObjectIdentifier + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId + ", time: " + DateTime.UtcNow.ToString("MM/dd/yyyy hh:mm:ss.fff tt"));
+            return retVal;
+        }
+
+        public async Task<bool> Scan(Repository fsRepo)
+        {
+            bool scanDone = false;
+            var postTaskTasks = new List<Task>();
+            object SpinLock = new object();
+
+            PrepCredentials(fsRepo);
+            using (var throttler = new SemaphoreSlim(_maxFilesScanCocur))
+            {
+                // Scan files
+                while (!scanDone)
+                {
+                    await throttler.WaitAsync();
+                    IteratorItem item = null;
+                    lock (SpinLock)
+                    {
+                        item = SMBIterator.NextItem();
+                    }
+                    if (item != null)
+                        postTaskTasks.Add(Task.Run<ScanResult>(() => ScanNext(item)).ContinueWith(tsk => release(throttler)));
+                    else
+                        scanDone = true;
+                    /*  List<Task> toRemove = new List<Task>();
+
+                      // Clean the completed tasks from the array
+                      foreach (Task<ScanResult> t in postTaskTasks)
+                      {
+                          toRemove = new List<Task>();
+                          if (t.IsCompleted || t.IsCanceled || t.IsFaulted)
+                          {
+                              if (t.IsCompleted && t.Result == null)
+                                  scanDone = true;
+
+                              toRemove.Add(t);
+                          }
+                      }
+                      foreach (Task t in toRemove)
+                      {
+                          postTaskTasks.Remove(t);
+                      }*/
+
+                    if (scanDone)
+                    {
+                        Task.WaitAll(postTaskTasks.ToArray());
+                    }
                 }
             }
 
-            return null;
+            return true;
         }
-
-      
-
-        private async void ProcessDir(string dir)
+        private async Task<bool> ProcessDir(string dir)
         {
+            Console.WriteLine("Started processing folder: " + dir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             // Process sub dirs
             string[] directories = Directory.GetDirectories(dir);
 
             //TODO: If this fails - enumerate
 
             // Store all the sub dirs in the data store wiht flag - need to traverse
-            await SMBDal.BulkAddFolders(directories.ToList());
+            if (directories.Count() > 0)
+            {
+                Console.WriteLine("Sent to BulkAdd " + directories.Count() + " records" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                await SMBDal.BulkAddFolders(directories.ToList());
+                Console.WriteLine("Line after BulkAdd of " + directories.Count() + " records" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+            }
+            return true;
         }
-
+        private static void release(SemaphoreSlim sem)
+        {
+            Console.WriteLine("Sem released" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+            sem.Release();
+        }
         private async Task<bool> TraverseTree(string root, int maxTasks)
         {
             string currentDir = root;
@@ -104,19 +200,40 @@ namespace PF.Connectors
                     }
                     else
                     {
-                        postTaskTasks.Add(Task.Factory.StartNew(() => ProcessDir(currentDir)).ContinueWith(tsk => throttler.Release()));
-                    }
+                        Console.WriteLine("Before wait: " + currentDir + ", wait: " + throttler.CurrentCount + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                        await throttler.WaitAsync();
+                        Console.WriteLine("After wait: " + currentDir + ", wait: " + throttler.CurrentCount + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                        string value = currentDir.ToString();
+                        postTaskTasks.Add(Task.Run(() => ProcessDir(value)).ContinueWith(tsk => release(throttler)));
+                        Console.WriteLine("After add task: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
 
-                    // Don't continue if there already are maxTasks running
-                    throttler.Wait();
+                    }
 
                     // Fetch the next directory to traverse and do it again
                     currentDir = await SMBIterator.GetNextFolderForTraverse();
+                    Console.WriteLine("GetNextFolderForTraverse returned: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+
+                    // Clean the completed tasks from the array
+                    List<Task> toRemove = new List<Task>();
+                    foreach (Task t in postTaskTasks)
+                    {
+                        toRemove = new List<Task>();
+                        if (t.IsCompleted || t.IsCanceled || t.IsFaulted)
+                        {
+                            toRemove.Add(t);
+                        }
+                    }
+                    foreach (Task t in toRemove)
+                    {
+                        postTaskTasks.Remove(t);
+                    }
 
                     if (currentDir == null)
                     {
+                        Console.WriteLine("WaitAll" + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
                         Task.WaitAll(postTaskTasks.ToArray());
                         currentDir = await SMBIterator.GetNextFolderForTraverse();
+                        Console.WriteLine("Got directory after wait all: " + currentDir + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
                     }
                 }
             }

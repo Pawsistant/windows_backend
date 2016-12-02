@@ -8,15 +8,25 @@ namespace PF.Model
 {
     public class MetadataItem
     {
-        public MetadataItem(string value)
+        public MetadataItem(string name, string value)
         {
+            Name = name;
             Value = value;
+            if (Value == null)
+                Value = "";
+            AdditionalData = "";
         }
-        public MetadataItem(string value, string additionalData)
+        public MetadataItem(string name, string value, string additionalData)
         {
+            Name = name;
             Value = value;
+            if (Value == null)
+                Value = "";
             AdditionalData = additionalData;
+            if (AdditionalData == null)
+                AdditionalData = "";
         }
+        public string Name { get; set; }
         public string Value { get; set; }
         public string AdditionalData { get; set; }
     }
@@ -24,12 +34,12 @@ namespace PF.Model
     {
         public IteratorItem()
         {
-            Metadata = new Dictionary<string, MetadataItem>();
+            Metadata = new List<MetadataItem>();
             ItemId = Guid.NewGuid();
         }
         public Guid ItemId { get; set; }
         public string DataObjectIdentifier { get; set; }
-        public Dictionary<string, MetadataItem> Metadata {get;set;}
+        public List<MetadataItem> Metadata {get;set;}
 
        
     }

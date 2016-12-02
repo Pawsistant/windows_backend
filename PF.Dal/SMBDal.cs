@@ -6,118 +6,153 @@ using System.Data;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Configuration;
 
 using MongoDB.Bson;
 using MongoDB.Driver;
+using System.Threading;
+using PF.Utils;
 
 namespace PF.Dal
 {
     //TODO: Change from added at to sequence
 
-    public class SMBDal
+    public class SMBDal : BaseClass
     {
-        protected static IMongoClient _client = new MongoClient("MongoConnetionString");
-        protected static IMongoDatabase _database = _client.GetDatabase("Prifender");
+        protected static IMongoClient _client = new MongoClient(ConfigurationManager.AppSettings["mongo_connection_string"]);
+        protected static IMongoDatabase _database = _client.GetDatabase(ConfigurationManager.AppSettings["mongo_database_name"]);
+        static IMongoCollection<BsonDocument> _countersCollection = _database.GetCollection<BsonDocument>("counters");
+
         private static List<BsonDocument> _currentPage = new List<BsonDocument>();
         private static int _currentPlaceInTheList = 0;
         static object SpinLock = new object();
         static object SpinLockScanning = new object();
+        static long filterNumber = 0;
+        
+        static async Task<long> GetNextCounter(string counterName)
+        {
+            var filter = Builders<BsonDocument>.Filter.Eq(new StringFieldDefinition<BsonDocument, BsonString>("_id"), counterName);
+            var update = Builders<BsonDocument>.Update.Inc("sequence_value", 1);
+            var newCounter = await _countersCollection.FindOneAndUpdateAsync(filter, update);
+
+            return (long)newCounter["sequence_value"].AsDouble;
+        }
 
         public static async Task<bool> BulkAddFolders(IList<string> folders)
         {
             var collection = _database.GetCollection<BsonDocument>("folders");
-            List<Dictionary<string, string>> documents = new List<Dictionary<string, string>>();
+            List<BsonDocument> documents = new List<BsonDocument>();
 
             foreach (string folder in folders)
             {
-                documents.Add(new Dictionary<string, string>() { { "added_at", DateTime.UtcNow.ToString() }, { "path", folder } });
+                long counter = await GetNextCounter("folderid");
+
+                documents.Add(new BsonDocument() { { "added_at", new BsonDateTime(DateTime.UtcNow) }, { "path", folder }, { "scanned", new BsonBoolean(false) }, { "counter", new BsonInt64(counter) } });
+                Console.WriteLine("saving: " + folder + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             }
 
-            await collection.InsertManyAsync(documents.Select(d => new BsonDocument(d)));
-
+            await collection.InsertManyAsync(documents);
+            Console.WriteLine("Added " + documents.Count + " records to DB");
             return true;
         }
 
         public static async Task<string> GetNextFolderForTraverse()
         {
-            var collection = _database.GetCollection<BsonDocument>("folders");
-            
-            if (_currentPlaceInTheList == _currentPage.Count)
+            Console.WriteLine("start spinlock wait" + DateTime.Now.Second + ' ' + DateTime.Now.Millisecond);
+            string retVal;
+            lock (SpinLock)
             {
-                lock (SpinLock)
+                var collection = _database.GetCollection<BsonDocument>("folders");
+            
+                if (_currentPlaceInTheList == _currentPage.Count)
                 {
-                    if (_currentPlaceInTheList == _currentPage.Count)
-                    {
-                        DateTime filterDate;
-
-                        if (_currentPage.Count == 0)
+                
+                        if (_currentPlaceInTheList == _currentPage.Count)
                         {
-                            // Get the first page
-                            filterDate = DateTime.UtcNow.Subtract(new TimeSpan(5, 0, 0, 0));
-                        }
-                        else
-                        {
-                            // Get next page
-                            filterDate = _currentPage[_currentPlaceInTheList - 1]["added_at"].ToUniversalTime();
-                        }
+                            if (_currentPage.Count > 0)
+                                filterNumber = _currentPage[_currentPlaceInTheList - 1]["counter"].AsInt64;
 
-                        var filter = Builders<BsonDocument>.Filter.Gt(new StringFieldDefinition<BsonDocument, BsonDateTime>("added_at"), new BsonDateTime(filterDate));
-                        _currentPage = collection.Find(filter).SortBy(bson => bson["added_at"]).Skip(0).Limit(100).ToList();
-                        _currentPlaceInTheList = 0;
-                    }
+                            Console.WriteLine("GetNextFolderForTraverse, going to fetch new page after id: " + filterNumber);
+                            var filter = Builders<BsonDocument>.Filter.Gt(new StringFieldDefinition<BsonDocument, BsonInt64>("counter"), new BsonInt64(filterNumber));
+                            _currentPage = collection.Find(filter).SortBy(bson => bson["counter"]).Skip(0).Limit(100).ToList();
+                            _currentPlaceInTheList = 0;
+                        }
+                
                 }
+
+                if (_currentPage.Count > 0)
+                {
+                    BsonDocument doc = null;
+                    //return the next page for traverse with lock
+                    Console.WriteLine("GetNextFolderForTraverse, _currentPlaceInTheList: " + _currentPlaceInTheList + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+
+                    doc = _currentPage[_currentPlaceInTheList];
+                    _currentPlaceInTheList++;
+                    retVal = doc["path"].AsString;
+                    
+                    Console.WriteLine("GetNextFolderForTraverse, returns: " + retVal + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+                }
+                else
+                    retVal = null;
+
+                Console.WriteLine("end spinlock wait " + DateTime.Now.Second + ' ' + DateTime.Now.Millisecond + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
             }
 
-            //return the next page for traverse with lock
-            BsonDocument doc = _currentPage[_currentPlaceInTheList];
-            _currentPlaceInTheList++;
-
-            return doc["path"].AsString;
+            return retVal;
         }
 
-        public static async Task<Dictionary<string,string>> GetNextFolderForScanning(Dictionary<string, string> currentFolder)
+        public static Dictionary<string,object> GetNextFolderForScanning(Dictionary<string, object> currentFolder)
         {
             var collection = _database.GetCollection<BsonDocument>("folders");
             List<BsonDocument> newFolder = null;
-            Dictionary<string, string> retVal = null;
+            Dictionary<string, object> retVal = null;
+            long filterNumber = 0;
 
             lock (SpinLockScanning)
             {
                 if (retVal == null)
                 {
-                    if (currentFolder == null)
+                    if (currentFolder != null)
                     {
-                        var filter = new BsonDocument();
-                        newFolder = collection.Find(filter).SortBy(bson => bson["added_at"]).Skip(0).Limit(1).ToList();
+                        // Mark current folder as scanned
+                        var counterFilter = Builders<BsonDocument>.Filter.Eq("counter", new BsonInt64((long)currentFolder["counter"]));
+                        var update = Builders<BsonDocument>.Update
+                            .Set("scanned", new BsonBoolean(true));
+                        var result = collection.UpdateOne(counterFilter, update);
+
+                        filterNumber = (long)currentFolder["counter"];
                     }
-                    else
-                    {
-                        var filter = Builders<BsonDocument>.Filter.Gt(new StringFieldDefinition<BsonDocument, BsonDateTime>("added_at"), new BsonDateTime(DateTime.Parse(currentFolder["added_at"])));
-                        newFolder = collection.Find(filter).SortBy(bson => bson["added_at"]).Skip(0).Limit(1).ToList();
-                    }
-                        
+
+                    var builder = Builders<BsonDocument>.Filter;
+                    var filter = builder.Gt("counter", new BsonInt64(filterNumber));// & builder.Eq("scanned", new BsonBoolean(false));
+                    newFolder = collection.Find(filter).SortBy(bson => bson["counter"]).Skip(0).Limit(1).ToList();
 
                     if (newFolder != null && newFolder.Count > 0)
                     {
-                        retVal = new Dictionary<string, string>();
-                        retVal.Add("added_at", newFolder[0]["added_at"].AsString);
-                        retVal.Add("path", newFolder[0]["path"].AsString);
+                        retVal = newFolder[0].ToDictionary();
                     }
                 }
             }
 
+            if (retVal != null)
+                Console.WriteLine("Getnextfolder: " + retVal["path"] + ", Thread Id: " + Thread.CurrentThread.ManagedThreadId);
+
             return retVal;
         }
-        static BsonDocument ParseIteratorItem(IteratorItem item)
+
+        public static async Task<bool> AddDataObject(ScanResult dbItem)
         {
-            //TODO: implement
-            return new BsonDocument();
-        }
-        public static async Task<bool> AddDataObject(IteratorItem dbItem)
-        {
-            var collection = _database.GetCollection<BsonDocument>("data_objects_for_matching");
-            BsonDocument doc = ParseIteratorItem(dbItem);
-            await collection.InsertOneAsync(doc);
+            try
+            {
+                var collection = _database.GetCollection<BsonDocument>("data_objects_for_matching");
+                BsonDocument doc = dbItem.ToBsonDocument();
+                doc.Add(new BsonElement("counter", new BsonInt64(await GetNextCounter("data_objects_for_matching_id"))));
+                await collection.InsertOneAsync(doc);
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to add Data Object to DB: " + dbItem.DataObjectIdentifier);
+            }
             return true;
         }
     }

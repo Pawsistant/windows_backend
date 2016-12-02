@@ -14,6 +14,6 @@ namespace PF.Utils
             Log = LogManager.GetLogger(GetType().FullName);
         }
 
-        protected Logger Log { get; private set; }
+        protected static Logger Log { get; private set; }
     }
 }

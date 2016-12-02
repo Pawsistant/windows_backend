@@ -12,7 +12,7 @@ namespace PF.Connectors
 {
     public class SMBIterator
     {
-        static Dictionary<string,string> _currentFolder = null;
+        static Dictionary<string,object> _currentFolder = null;
         static IList<string> _files = null;
         static int _currentFileNumber = 0;
         static object SpinLock = new object();
@@ -22,35 +22,74 @@ namespace PF.Connectors
 
         private static async Task<IEnumerable<string>> GetFolderEnumerator(string folder)
         {
-            IEnumerable<string> files = await FileUtils.EnumerateFiles(folder, "*.txt|*.doc|*.docx|*.pdf|*.csv|*.html");
+            IEnumerable<string> files = await FileUtils.EnumerateFiles(folder, "*.txt|*.doc|*.docx|*.pdf|*.csv|*.html|*.eml|*.xls|*.xlsx");
 
             return files;
         }
-        private static async Task<IList<string>> GetFolderFiles(string folder)
+        private static IList<string> GetFolderFiles(string folder)
         {
-            IList<string> files = await FileUtils.GetFiles(folder, "*.txt|*.doc|*.docx|*.pdf|*.csv|*.html");
+            IList<string> files = FileUtils.GetFiles(folder, "*.txt|*.doc|*.docx|*.pdf|*.csv|*.html|*.eml|*.xls|*.xlsx");
 
             return files;
         }
 
-        static async void getNextFolder()
+        static void getNextFolder()
         {
-            _currentFolder = await SMBDal.GetNextFolderForScanning(_currentFolder);
-            _files = await GetFolderFiles(_currentFolder["path"]);
+            _currentFolder = SMBDal.GetNextFolderForScanning(_currentFolder);
+            if (_currentFolder != null)
+                _files = GetFolderFiles(_currentFolder["path"].ToString());
+            else
+                _files = null;
         }
 
-        public static async Task<IteratorItem> NextItem()
+        public static IteratorItem NextItem()
         {
-            string retVal;
-            // Get the folder to process
-            if (_currentFolder == null || _currentFileNumber == _files.Count)
-            {
-                //TODO: Add lock
-                getNextFolder();
-            }
+            string retVal = null;
 
             lock (SpinLock)
             {
+                if (_currentFolder == null || _currentFileNumber == _files.Count)
+                {
+                    getNextFolder();
+
+                    if (_files != null && _files.Count == 0)
+                    {
+                        while (_files.Count == 0)
+                            getNextFolder();
+                    }
+                    if (_files == null)
+                        return null;
+
+                    _currentFileNumber = 0;
+                }
+
+                retVal = _files[_currentFileNumber];
+                _currentFileNumber++;
+            }
+
+            // Return the next item from the list
+            return new IteratorItem() { DataObjectIdentifier = retVal };
+        }
+
+        public static async Task<IteratorItem> NextItemAsync()
+        {
+            string retVal = null;
+            
+            lock (SpinLock)
+            {
+                if (_currentFolder == null || _currentFileNumber == _files.Count)
+                {
+                    getNextFolder();
+
+                    if (_files.Count == 0)
+                    {
+                        while (_files.Count == 0)
+                            getNextFolder();
+                    }
+
+                    _currentFileNumber = 0;
+                }
+            
                 retVal = _files[_currentFileNumber];
                 _currentFileNumber++;
             }
