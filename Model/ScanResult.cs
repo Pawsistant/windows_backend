@@ -18,14 +18,15 @@ namespace PF.Model
         public string DataObjectIdentifier { get; set; }
         public Dictionary<string, List<string>> Identifiers { get; set; }
         public List<MetadataItem> Metadata { get; set; }
+        public string RepositoryId { get; set; }
 
         public BsonDocument ToBsonDocument()
         {
             BsonDocument retVal = new BsonDocument();
             BsonArray bsonMetadata = new BsonArray();
             BsonArray bsonIdentifiers = new BsonArray();
-
-            retVal.Add(new BsonElement("data_obect_identifier", new BsonString(DataObjectIdentifier)));
+            retVal.Add(new BsonElement("repositoryId", new BsonObjectId(new ObjectId(RepositoryId))));
+            retVal.Add(new BsonElement("data_object_identifier", new BsonString(DataObjectIdentifier)));
             if (Identifiers != null)
             {
                 foreach (string key in Identifiers.Keys)

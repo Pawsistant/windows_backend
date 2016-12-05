@@ -16,6 +16,11 @@ using NPOI.WP;
 using NPOI.WP.UserModel;
 using NPOI.XWPF.UserModel;
 using NPOI.HSSF.Extractor;
+using PF.Infrastructure;
+using System.Runtime.Serialization.Formatters.Binary;
+using System.Configuration;
+using Spire.Doc;
+using Spire.Doc.Documents;
 
 namespace PF.Utils.FileParsers
 {
@@ -37,7 +42,7 @@ namespace PF.Utils.FileParsers
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to parse: " + file.Name);
+                ParsersInfra.RecordParsingFailure(Log, ex, file);
             }
 
             return retVal;
@@ -92,7 +97,7 @@ namespace PF.Utils.FileParsers
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to parse: " + file.Name);
+                ParsersInfra.RecordParsingFailure(Log, ex, file);
             }
             return retVal;
         }
@@ -102,6 +107,7 @@ namespace PF.Utils.FileParsers
     {
         public Outlook() :base()
         { }
+        static string _tmpFilesFolder = ConfigurationManager.AppSettings["tmp_files_folder"];
 
         public static string Parse(FileStream file)
         {
@@ -112,22 +118,43 @@ namespace PF.Utils.FileParsers
             {
                 using (MemoryStream ms = new MemoryStream())
                 {
-                    file.CopyTo(ms);
-                    MsgReader.Mime.Message msg = new MsgReader.Mime.Message(ms.ToArray());
-                    retVal += "From: " + (msg.Headers.From == null ? "" : msg.Headers.From.DisplayName) + Environment.NewLine;
-                    retVal += "To: " + ParseAddresses(msg.Headers.To) + Environment.NewLine;
-                    retVal += "Cc: " + ParseAddresses(msg.Headers.Cc) + Environment.NewLine;
-                    retVal += "Bcc: " + ParseAddresses(msg.Headers.Bcc) + Environment.NewLine;
-                    retVal += "Subject: " + msg.Headers.Subject + Environment.NewLine;
+                    if (file.Name.ToLower().EndsWith("eml"))
+                    {
+                        file.CopyTo(ms);
+                        MsgReader.Mime.Message msg = new MsgReader.Mime.Message(ms.ToArray());
+                        retVal += "From: " + (msg.Headers.From == null ? "" : msg.Headers.From.DisplayName) + Environment.NewLine;
+                        retVal += "To: " + ParseAddresses(msg.Headers.To) + Environment.NewLine;
+                        retVal += "Cc: " + ParseAddresses(msg.Headers.Cc) + Environment.NewLine;
+                        retVal += "Bcc: " + ParseAddresses(msg.Headers.Bcc) + Environment.NewLine;
+                        retVal += "Subject: " + msg.Headers.Subject + Environment.NewLine;
 
-                    retVal += msg.TextBody.GetBodyAsText();
+                        retVal += msg.TextBody.GetBodyAsText();
+                    }
+                    else if (file.Name.ToLower().EndsWith("msg"))
+                    {
+                        MsgReader.Outlook.Storage.Message msg = new MsgReader.Outlook.Storage.Message(file, FileAccess.Read);
+                         retVal += "From: " + (msg.Sender == null ? "" : msg.Sender.DisplayName + " " + msg.Sender.Email) + Environment.NewLine;
+                        foreach(MsgReader.Outlook.Storage.Recipient rec in msg.Recipients)
+                        {
+                            retVal += "To: " + rec.DisplayName + " " + rec.Email + Environment.NewLine;
+                        }
+                         
+                        retVal += "Subject: " + msg.Subject + Environment.NewLine;
+                        retVal += msg.BodyText;
 
-                    //TODO: Read attachements
+                        foreach(MsgReader.Outlook.Storage.Attachment a in msg.Attachments)
+                        {
+                            string fileName = DateTime.Now.Ticks.ToString() + a.FileName;
+                            File.WriteAllBytes(_tmpFilesFolder + "\\" + fileName, a.Data);
+                            FileInfo f = new FileInfo(fileName);
+                            retVal += fileName + ": " + FileUtils.ParseSync(new FileInfo(_tmpFilesFolder + "\\" + fileName));
+                        }
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to parse: " + file.Name);
+                ParsersInfra.RecordParsingFailure(Log, ex, file);
             }
             return retVal;
         }
@@ -166,7 +193,7 @@ namespace PF.Utils.FileParsers
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to parse: " + file.Name);
+                ParsersInfra.RecordParsingFailure(Log, ex, file);
             }
             return retVal;
         }
@@ -238,12 +265,12 @@ namespace PF.Utils.FileParsers
 
             try
             {
-
-               // NPOI.HWPF.HWPFDocument doc = new HWPFDocument(file);
+                Spire.Doc.Document doc = new Spire.Doc.Document(file);
+                retVal = doc.GetText();
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to parse: " + file.Name);
+                ParsersInfra.RecordParsingFailure(Log, ex, file);
             }
 
             return retVal;
@@ -267,7 +294,7 @@ namespace PF.Utils.FileParsers
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to parse: " + file.Name);
+                ParsersInfra.RecordParsingFailure(Log, ex, file);
             }
 
             return retVal;

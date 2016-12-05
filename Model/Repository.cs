@@ -12,6 +12,7 @@ namespace PF.Model
         {
             properties = new Dictionary<string, string>();
         }
+        public string id { get; set; }
         public string name { get; set; }
         public string type_id { get; set; }
         public string description { get; set; }

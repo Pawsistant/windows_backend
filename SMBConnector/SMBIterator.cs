@@ -1,12 +1,14 @@
 ﻿using PF.Dal;
 using PF.Model;
 using PF.Utils;
+using PF.Infrastructure;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Configuration;
 
 namespace PF.Connectors
 {
@@ -19,7 +21,7 @@ namespace PF.Connectors
         static IList<string> _files = null;
         static int _currentFileNumber = 0;
         static object SpinLock = new object();
-
+        static int _maxRetry = int.Parse(ConfigurationManager.AppSettings["max_retries"]);
         // Make it single tone
         // On first load - get the first page of the records that need to be scanned
 
@@ -31,8 +33,21 @@ namespace PF.Connectors
         }
         private static IList<string> GetFolderFiles(string folder)
         {
-            IList<string> files = FileUtils.GetFiles(folder, "*.txt|*.doc|*.docx|*.pdf|*.csv|*.html|*.eml|*.xls|*.xlsx");
-
+            IList<string> files = new List<string>();
+            try
+            {
+                files = FileUtils.GetFiles(folder, "*.txt|*.doc|*.docx|*.pdf|*.csv|*.html|*.eml|*.xls|*.xlsx");
+            }
+            catch(UnauthorizedAccessException ex)
+            {
+                Counter.Add("failed_to_open_folder_permissions", 1);
+                Log.Error(ex, "Failed to open folder");
+            }
+            catch(Exception ex)
+            {
+                Counter.Add("failed_to_open_folder_generic", 1);
+                Log.Error(ex, "Failed to open folder");
+            }
             return files;
         }
 
@@ -51,29 +66,40 @@ namespace PF.Connectors
 
             lock (SpinLock)
             {
-                try
+                int retry = 0;
+                bool failed = true;
+
+                // Retry this 3 times in case of transient failure
+                while (retry < _maxRetry && failed)
                 {
-                    if (_currentFolder == null || _currentFileNumber == _files.Count)
+                    failed = false;
+
+                    try
                     {
-                        getNextFolder();
-
-                        if (_files != null && _files.Count == 0)
+                        if (_currentFolder == null || _currentFileNumber == _files.Count)
                         {
-                            while (_files.Count == 0)
-                                getNextFolder();
+                            getNextFolder();
+
+                            if (_files != null && _files.Count == 0)
+                            {
+                                while (_files != null && _files.Count == 0)
+                                    getNextFolder();
+                            }
+                            if (_files == null)
+                                return null;
+
+                            _currentFileNumber = 0;
                         }
-                        if (_files == null)
-                            return null;
 
-                        _currentFileNumber = 0;
+                        retVal = _files[_currentFileNumber];
+                        _currentFileNumber++;
                     }
-
-                    retVal = _files[_currentFileNumber];
-                    _currentFileNumber++;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Failed to get next folder. Current folder: " + _currentFolder);
+                    catch (Exception ex)
+                    {
+                        Log.Error(ex, "Failed to get next folder. Current folder: " + _currentFolder + ", retry count: " + retry.ToString());
+                        retry++;
+                        failed = true;
+                    }
                 }
             }
 

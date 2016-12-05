@@ -13,6 +13,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PF.Dal", "PF.Dal\PF.Dal.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PF.Utils", "PF.Utils\PF.Utils.csproj", "{C627ED60-7AA9-4A3B-B5AC-48B2C77FCE9F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ResourceInterogator", "..\..\mockup\Windows\ResourceInterogator\ResourceInterogator.csproj", "{D59B2DD6-F298-497E-BE96-BE7F0789FB24}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PF.Infrastructure", "PF.Infrastructure\PF.Infrastructure.csproj", "{A1FA3162-DDED-46BA-9BE4-659E0C87A0A7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -39,6 +43,14 @@ Global
 		{C627ED60-7AA9-4A3B-B5AC-48B2C77FCE9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C627ED60-7AA9-4A3B-B5AC-48B2C77FCE9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C627ED60-7AA9-4A3B-B5AC-48B2C77FCE9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D59B2DD6-F298-497E-BE96-BE7F0789FB24}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D59B2DD6-F298-497E-BE96-BE7F0789FB24}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D59B2DD6-F298-497E-BE96-BE7F0789FB24}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D59B2DD6-F298-497E-BE96-BE7F0789FB24}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1FA3162-DDED-46BA-9BE4-659E0C87A0A7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1FA3162-DDED-46BA-9BE4-659E0C87A0A7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1FA3162-DDED-46BA-9BE4-659E0C87A0A7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1FA3162-DDED-46BA-9BE4-659E0C87A0A7}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

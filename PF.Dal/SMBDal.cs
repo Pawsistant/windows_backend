@@ -12,6 +12,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using System.Threading;
 using PF.Utils;
+using PF.Infrastructure;
 
 namespace PF.Dal
 {
@@ -143,14 +144,16 @@ namespace PF.Dal
             return retVal;
         }
 
-        public static async Task<bool> AddDataObject(ScanResult dbItem)
+        public static async Task<bool> AddDataObjectForMatching(ScanResult dbItem)
         {
             try
             {
                 var collection = _database.GetCollection<BsonDocument>("data_objects_for_matching");
                 BsonDocument doc = dbItem.ToBsonDocument();
                 doc.Add(new BsonElement("counter", new BsonInt64(await GetNextCounter("data_objects_for_matching_id"))));
-                await collection.InsertOneAsync(doc);
+                var filter = Builders<BsonDocument>.Filter.Eq(new StringFieldDefinition<BsonDocument, BsonString>("data_object_identifier"), dbItem.DataObjectIdentifier);
+                await collection.ReplaceOneAsync(filter, doc, new UpdateOptions() { IsUpsert = true });
+                //await collection.InsertOneAsync(doc);
             }
             catch (Exception ex)
             {

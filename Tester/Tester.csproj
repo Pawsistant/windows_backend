@@ -34,6 +34,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
+    <Reference Include="System.configuration" />
     <Reference Include="System.Core" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -63,6 +64,10 @@
     <ProjectReference Include="..\PF.Dal\PF.Dal.csproj">
       <Project>{ff4333e0-a439-4ea6-9db1-01cef1979586}</Project>
       <Name>PF.Dal</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\PF.Infrastructure\PF.Infrastructure.csproj">
+      <Project>{a1fa3162-dded-46ba-9be4-659e0c87a0a7}</Project>
+      <Name>PF.Infrastructure</Name>
     </ProjectReference>
     <ProjectReference Include="..\PF.Utils\PF.Utils.csproj">
       <Project>{c627ed60-7aa9-4a3b-b5ac-48b2c77fce9f}</Project>

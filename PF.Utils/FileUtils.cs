@@ -6,15 +6,16 @@ using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using PF.Utils.FileParsers;
+using PF.Infrastructure;
 
 namespace PF.Utils
 {
     public class FileUtils : BaseClass
     {
-        public FileUtils() :base()
+        public FileUtils() : base()
         { }
 
-        public static async Task<string> Parse(FileInfo file)
+        public static string ParseSync(FileInfo file)
         {
             string text = null;
             try
@@ -63,8 +64,19 @@ namespace PF.Utils
             catch (Exception ex)
             {
                 Log.Error(ex, "Failed to start Parser for: " + file.FullName);
+                Counter.Add("failed_to_open", 1);
+                return null;
             }
+
+            if (text.Length == 0)
+                Counter.Add("empty_file", 1);
+
             return text;
+        }
+
+        public static async Task<string> Parse(FileInfo file)
+        {
+            return (ParseSync(file));
         }
 
         public static Task<IEnumerable<String>> EnumerateFiles(String path, string filter)
@@ -73,27 +85,47 @@ namespace PF.Utils
         }
         public static Task<List<String>> GetFilesAsync(String path, string filter)
         {
-            //TODO: Add RTF
-            return Task.Run(() => { return Directory.GetFiles(path, "*.*", SearchOption.TopDirectoryOnly).Where(s => s.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) ||
-            s.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)
-            || s.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
-            || s.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".htm", StringComparison.OrdinalIgnoreCase)
-            || s.EndsWith(".eml", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".xls", StringComparison.OrdinalIgnoreCase)
-            || s.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)).ToList();
+            return Task.Run(() => {
+                return GetFiles(path, filter);
             });
-        }//*.txt|*.doc|*.docx|*.pdf|*.csv|*.html|*.eml|*.xls|*.xlsx
+        }
 
         public static List<String> GetFiles(String path, string filter)
         {
             //TODO: Add RTF
+            List<string> retVal = new List<string>();
 
-                return Directory.GetFiles(path, "*.*", SearchOption.TopDirectoryOnly).Where(s => s.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) ||
-s.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)
-|| s.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
-|| s.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
-|| s.EndsWith(".eml", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".xls", StringComparison.OrdinalIgnoreCase)
-|| s.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)).ToList();
-            
+            try
+            {
+                retVal = Directory.GetFiles(path, "*.*", SearchOption.TopDirectoryOnly).Where(s => s.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".htm", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".eml", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".msg", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".xls", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // Iterate through all the files to not get access denied
+                IEnumerable<string> files = Directory.EnumerateFiles(path, "*.*", SearchOption.TopDirectoryOnly).Where(s => s.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".docx", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".txt", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".csv", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".htm", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".eml", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".msg", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".xls", StringComparison.OrdinalIgnoreCase)
+                || s.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase));
+
+                foreach (string ff in files)
+                {
+                    try
+                    {
+                        FileInfo f = new FileInfo(ff);
+                        retVal.Add(f.FullName);
+                    }
+                    catch (Exception e)
+                    {
+                        Log.Info(e, "User doesn't have permissions to the file: " + ff);
+                    }
+                }
+            }
+            return retVal;
         }
 
         private static string ExtractComputerNameFromUrl(string url)
@@ -106,7 +138,8 @@ s.EndsWith(".doc", StringComparison.OrdinalIgnoreCase) || s.EndsWith(".docx", St
         {
             NetworkCredential theNetworkCredential = new NetworkCredential(domainName + "\\" + username, password);
             CredentialCache theNetCache = new CredentialCache();
-            theNetCache.Add(new Uri(ExtractComputerNameFromUrl(path)), "Basic", theNetworkCredential);
+            string server = ExtractComputerNameFromUrl(path);
+            theNetCache.Add(new Uri(path), "Digest", theNetworkCredential);
         }
 
         public static Task<FileInfo> GetFileInfo(String path)
